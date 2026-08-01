@@ -1,7 +1,10 @@
 import axios from 'axios';
 
+const envUrl = (import.meta as any).env?.VITE_API_URL;
+const API_BASE_URL = envUrl || 'https://hippo-crm-rho.vercel.app/api/v1';
+
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json'
   }
