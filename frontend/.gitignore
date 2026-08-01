@@ -3,5 +3,8 @@ dist
 build
 .env
 .env.local
+.env.development
+.env.production
+.env.*
 *.log
 .DS_Store

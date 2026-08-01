@@ -12,6 +12,9 @@ build
 # Environment Variables & Secrets
 .env
 .env.local
+.env.development
+.env.production
+.env.*
 .env.*.local
 *.env
 
