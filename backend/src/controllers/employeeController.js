@@ -40,6 +40,23 @@ exports.createEmployee = async (req, res, next) => {
       return res.status(400).json({ message: 'User with this email already exists' });
     }
 
+    const isAdmin = req.user && ['ADMIN', 'DIRECTOR'].includes(req.user.role);
+    const loggedInEmployee = req.user ? await Employee.findOne({ userId: req.user._id }) : null;
+
+    // SECURITY: only an admin may assign a privileged role. Agents can only ever
+    // create AGENT accounts, and only attach them directly under themselves.
+    const safeRole = isAdmin ? (role || 'AGENT') : 'AGENT';
+
+    let sponsorParentId;
+    if (isAdmin) {
+      sponsorParentId = parentId || (loggedInEmployee ? loggedInEmployee._id : null);
+    } else {
+      if (!loggedInEmployee) {
+        return res.status(403).json({ message: 'No employee profile found for your account' });
+      }
+      sponsorParentId = loggedInEmployee._id;
+    }
+
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password || 'Password123!', salt);
 
@@ -48,17 +65,8 @@ exports.createEmployee = async (req, res, next) => {
       email,
       phone,
       password: hashedPassword,
-      role: role || 'AGENT'
+      role: safeRole
     });
-
-    // Auto-resolve parent sponsor from logged-in token user if not specified!
-    let sponsorParentId = parentId;
-    if (!sponsorParentId && req.user) {
-      const loggedInEmployee = await Employee.findOne({ userId: req.user._id });
-      if (loggedInEmployee) {
-        sponsorParentId = loggedInEmployee._id;
-      }
-    }
 
     const empCount = await Employee.countDocuments();
     const employeeCode = `EMP-${1000 + empCount + 1}`;
@@ -100,9 +108,28 @@ exports.updateEmployee = async (req, res, next) => {
     const employee = await Employee.findById(id);
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    if (currentRank) employee.currentRank = currentRank;
-    if (parentId !== undefined) employee.parentId = parentId || null;
-    await employee.save();
+    const isAdmin = req.user && ['ADMIN', 'DIRECTOR'].includes(req.user.role);
+
+    // Non-admins may only edit themselves or people in their own downline.
+    if (!isAdmin) {
+      const loggedInEmp = await Employee.findOne({ userId: req.user._id });
+      if (!loggedInEmp) {
+        return res.status(403).json({ message: 'No employee profile found for your account' });
+      }
+      const downlines = await getDownlineEmployeeIds(loggedInEmp._id);
+      const allowedIds = [loggedInEmp._id.toString(), ...downlines.map((d) => d.toString())];
+      if (!allowedIds.includes(employee._id.toString())) {
+        return res.status(403).json({ message: 'Access denied: you can only edit yourself or your downline' });
+      }
+    }
+
+    // SECURITY: rank and sponsor (parent) are system-controlled — only an admin
+    // can change them. This blocks self-promotion / re-parenting by agents.
+    if (isAdmin) {
+      if (currentRank) employee.currentRank = currentRank;
+      if (parentId !== undefined) employee.parentId = parentId || null;
+      await employee.save();
+    }
 
     if (fullName || phone) {
       await User.findByIdAndUpdate(employee.userId, {

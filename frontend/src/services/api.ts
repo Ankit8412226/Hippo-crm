@@ -18,4 +18,33 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Normalise backend errors into a single friendly message and handle expired /
+// invalid sessions globally (401 -> clear auth and bounce to login).
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error.response?.status;
+    const data = error.response?.data;
+
+    let friendlyMessage = data?.message || 'Something went wrong. Please try again.';
+    if (data?.errors && typeof data.errors === 'object') {
+      // Validation errors: { field: message } -> "message1, message2"
+      friendlyMessage = Object.values(data.errors).join(', ');
+    }
+    if (status === 429) {
+      friendlyMessage = data?.message || 'Too many attempts. Please wait and try again.';
+    }
+    error.friendlyMessage = friendlyMessage;
+
+    if (status === 401 && !window.location.pathname.includes('/login')) {
+      localStorage.removeItem('hippo_token');
+      localStorage.removeItem('hippo_user');
+      localStorage.removeItem('hippo_employee');
+      window.location.href = '/login';
+    }
+
+    return Promise.reject(error);
+  }
+);
+
 export default api;

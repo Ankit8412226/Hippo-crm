@@ -156,6 +156,6 @@ export interface DashboardStats {
     revenueTrend: { month: string; revenue: number; sales: number }[];
     plotStatusDistribution: { name: string; value: number; color: string }[];
     topEmployees: { name: string; rank: string; sales: number; teamSales: number }[];
-    projectRevenue: { name: string; plots: number; estimatedRevenue: number }[];
+    projectRevenue: { name: string; plots: number; soldPlots: number; revenue: number }[];
   };
 }

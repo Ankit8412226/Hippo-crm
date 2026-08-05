@@ -1,11 +1,21 @@
 import React from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Search, Bell, LogOut, User as UserIcon, Award } from 'lucide-react';
+import { Search, Bell, LogOut, ShieldCheck, Award } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+
+const ROLE_LABEL: Record<string, string> = {
+  ADMIN: 'Company Owner',
+  DIRECTOR: 'Director',
+  MANAGER: 'Manager',
+  AGENT: 'Agent',
+  EMPLOYEE: 'Employee'
+};
 
 export const Header: React.FC = () => {
   const { user, employee, logout } = useAuth();
   const navigate = useNavigate();
+
+  const isAdmin = !!user && ['ADMIN', 'DIRECTOR'].includes(user.role);
 
   const handleLogout = () => {
     logout();
@@ -35,7 +45,21 @@ export const Header: React.FC = () => {
           <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#F97316]"></span>
         </button>
 
-        {/* Current Rank Badge */}
+        {/* Access-role Badge (Owner vs Agent) */}
+        {user && (
+          <div
+            className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 text-xs font-semibold border ${
+              isAdmin
+                ? 'bg-[#F97316]/15 border-[#F97316]/40 text-[#F97316]'
+                : 'bg-[#22C55E]/15 border-[#22C55E]/40 text-[#22C55E]'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>{ROLE_LABEL[user.role] || user.role}</span>
+          </div>
+        )}
+
+        {/* Current MLM Rank Badge */}
         {employee && (
           <div className="px-3 py-1.5 rounded-full bg-[#1E40AF]/20 border border-[#1E40AF]/40 flex items-center gap-1.5 text-xs text-[#3B82F6] font-semibold">
             <Award className="w-3.5 h-3.5" />

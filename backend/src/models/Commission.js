@@ -51,4 +51,8 @@ const commissionSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+// One commission row per (transaction, employee) — hard DB guard against
+// double-payment even if the engine is somehow triggered twice concurrently.
+commissionSchema.index({ transactionId: 1, employeeId: 1 }, { unique: true });
+
 module.exports = mongoose.model('Commission', commissionSchema);

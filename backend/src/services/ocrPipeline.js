@@ -4,22 +4,29 @@ const { uploadToS3 } = require('./s3Service');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 /**
- * Multi-Modal AI (Google Gemini 1.5 Pro / 2.0 Vision API + PyMuPDF / OCR) layout parser
- * Analyzes uploaded architectural site map PDF/Image, uploads file to AWS S3,
- * and extracts plot numbers, dimensions, PLC breakdown, total cost, and status.
+ * Naksa (site layout map) parser.
+ *
+ * When GEMINI_API_KEY is configured, the uploaded map image is sent to Google
+ * Gemini Vision to extract plot numbers, geometry and (where legible) pricing.
+ * When AWS credentials are configured, the original file is stored to S3.
+ *
+ * If neither the key nor a real extraction is available, a clearly-labelled
+ * SAMPLE dataset is returned with low confidence so the human-in-the-loop
+ * review flow is always triggered (nothing is silently trusted).
  */
 async function processMapImageOCR({ projectId, mapName, fileBuffer, fileName }) {
   let s3ImageUrl = 'https://images.unsplash.com/photo-1524813686514-a57563d77965?auto=format&fit=crop&w=1200&q=80';
 
-  // 1. Upload Naksa Blueprint file to AWS S3
+  // 1. Store the uploaded Naksa file (no-op fake URL if AWS creds absent).
   if (fileBuffer) {
     s3ImageUrl = await uploadToS3(fileBuffer, fileName, 'image/png', 'naksa_layouts');
   }
 
   let extractedPlots = [];
   let overallConfidence = 0.896;
+  let usedAI = false;
 
-  // 2. Extract using Google Gemini 1.5 Pro / Gemini 2.0 Flash Vision API (Most accurate for architectural blueprints & Naksa maps)
+  // 2. Extract via Google Gemini Vision (best for architectural blueprints / Naksa).
   if (process.env.GEMINI_API_KEY && fileBuffer) {
     const preferredModel = process.env.GEMINI_VISION_MODEL || 'gemini-1.5-pro';
     const fallbackModels = [preferredModel, 'gemini-1.5-flash', 'gemini-2.0-flash-exp'];
@@ -36,22 +43,37 @@ async function processMapImageOCR({ projectId, mapName, fileBuffer, fileName }) 
           }
         };
 
-        const prompt = `You are a high-precision architectural blueprint and real estate site layout map (Naksa) OCR parser. Analyze this site plan image carefully. Extract all visible plot units and return a JSON array of objects with keys: plotNo, status (AVAILABLE, BOOKED, PENDING, SOLD), sellableSqYrd, carpetSqYrd, plc12mtr, plc9mtr, plcCorner, plcParkFacing, totalPlc, discountedPlc, otmc, gstOnOtherCharges, totalCost, confidence. Return ONLY valid, raw JSON array.`;
+        const prompt = `You are a high-precision real estate site layout map (Naksa) parser. Analyze this site plan image and extract EVERY visible plot unit.
+Return ONLY a raw JSON array (no markdown). Each object must have these keys:
+- plotNo (string, e.g. "E5-83")
+- status: one of AVAILABLE, BOOKED, PENDING, SOLD (infer from colour/legend; default AVAILABLE)
+- sellableSqYrd, carpetSqYrd (numbers, 0 if unknown)
+- plc12mtr, plc9mtr, plcCorner, plcParkFacing, totalPlc, discountedPlc, otmc, gstOnOtherCharges, totalCost (numbers, 0 if not printed on the map)
+- polygonPoints: array of {x, y} pixel coordinates tracing the plot boundary in this image (clockwise). REQUIRED so the plot can be drawn on a canvas.
+- confidence: number 0-1 for this plot.
+Return ONLY the JSON array.`;
 
         const result = await model.generateContent([prompt, imagePart]);
         const responseText = result.response.text();
         const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        extractedPlots = JSON.parse(cleanJson);
-        overallConfidence = 0.96; // High confidence for Gemini 1.5 Pro Vision!
-        break; // Successfully extracted using top Gemini model
+        const parsed = JSON.parse(cleanJson);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          extractedPlots = parsed;
+          overallConfidence = 0.96;
+          usedAI = true;
+          break;
+        }
       } catch (aiError) {
         console.warn(`Gemini Vision AI (${modelName}) parsing attempt note:`, aiError.message);
       }
     }
   }
 
-  // 3. Fallback extraction dataset if Gemini key not active or mock testing
+  // 3. SAMPLE dataset when no AI extraction is available (no key / parse failed).
+  //    Kept at low confidence so it is always flagged for human review.
+  let isSample = false;
   if (extractedPlots.length === 0) {
+    isSample = true;
     extractedPlots = [
       {
         plotNo: 'E5-78',
@@ -152,6 +174,13 @@ async function processMapImageOCR({ projectId, mapName, fileBuffer, fileName }) 
     ];
   }
 
+  // Attach a bounding-box rectangle to every plot so the canvas can always draw
+  // it, even if only polygon points (or nothing) were provided.
+  extractedPlots = extractedPlots.map((p) => {
+    const points = p.polygonPoints || p.polygon?.points || [];
+    return { ...p, coordinates: bboxFromPoints(points) };
+  });
+
   const plotMapRecord = await PlotMap.create({
     projectId,
     mapName: mapName || fileName || 'Site Layout Plan',
@@ -167,8 +196,22 @@ async function processMapImageOCR({ projectId, mapName, fileBuffer, fileName }) 
     imageUrl: plotMapRecord.imageUrl,
     confidenceScore: overallConfidence,
     requiresHumanReview: overallConfidence < 0.90,
+    usedAI,
+    isSample,
     extractedPlots
   };
+}
+
+/** Axis-aligned bounding box for a polygon (canvas rectangle fallback). */
+function bboxFromPoints(points) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return { x: 50, y: 50, width: 120, height: 90 };
+  }
+  const xs = points.map((p) => Number(p.x) || 0);
+  const ys = points.map((p) => Number(p.y) || 0);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  return { x: minX, y: minY, width: (Math.max(...xs) - minX) || 120, height: (Math.max(...ys) - minY) || 90 };
 }
 
 module.exports = {

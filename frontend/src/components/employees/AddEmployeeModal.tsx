@@ -3,6 +3,7 @@ import { X, UserPlus, ShieldCheck, Award } from 'lucide-react';
 import api from '../../services/api';
 import { Employee } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 
 interface AddEmployeeModalProps {
   existingEmployees: Employee[];
@@ -16,8 +17,9 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
   onSuccess
 }) => {
   const { user: currentUser, employee: loggedInEmployee } = useAuth();
+  const toast = useToast();
 
-  const isAdmin = currentUser?.role === 'ADMIN';
+  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'DIRECTOR';
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -42,12 +44,14 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
         parentId: parentId || (loggedInEmployee ? loggedInEmployee.id : null)
       });
 
-      alert('Agent created successfully and automatically attached to your downline leg!');
+      toast.success('Agent created and attached to your downline leg!');
       onSuccess();
       onClose();
     } catch (err: any) {
       console.error(err);
-      setError(err.response?.data?.message || 'Failed to create agent');
+      const msg = err.friendlyMessage || err.response?.data?.message || 'Failed to create agent';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -139,12 +143,15 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
 
             <div className="flex items-center justify-between text-xs border-t border-[#1F2937] pt-2">
               <span className="text-[#94A3B8] flex items-center gap-1.5 font-medium">
-                <Award className="w-4 h-4 text-[#FACC15]" /> Initial Position & Commission Rate:
+                <Award className="w-4 h-4 text-[#FACC15]" /> Initial Position:
               </span>
               <span className="text-[#FACC15] font-bold">
-                Business Executive (5%)
+                Business Executive
               </span>
             </div>
+            <p className="text-[10px] text-[#94A3B8] leading-relaxed">
+              Commission rate depends on the project's plan and is unlocked after the agent qualifies (min. 2 self sales). Rank auto-upgrades as they build their team.
+            </p>
           </div>
 
           {isAdmin && (

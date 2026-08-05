@@ -33,15 +33,49 @@ exports.getPayouts = async (req, res, next) => {
 
 exports.requestPayout = async (req, res, next) => {
   try {
-    const { employeeId, amount, bankDetails } = req.body;
-    const count = await Payout.countDocuments();
-    const referenceNo = `PAY-${Date.now()}-${count + 1}`;
+    const { employeeId: bodyEmployeeId, bankDetails } = req.body;
+
+    const isAdmin = req.user && ['ADMIN', 'DIRECTOR'].includes(req.user.role);
+
+    // SECURITY: agents can only request a payout for THEMSELVES. Admins may
+    // request on behalf of any employee.
+    let employeeId = bodyEmployeeId;
+    if (!isAdmin) {
+      const loggedInEmp = await Employee.findOne({ userId: req.user._id });
+      if (!loggedInEmp) {
+        return res.status(403).json({ message: 'No employee profile found for your account' });
+      }
+      employeeId = loggedInEmp._id;
+    }
+    if (!employeeId) {
+      return res.status(400).json({ message: 'employeeId is required' });
+    }
+
+    // Settle exactly the employee's outstanding (unpaid) commissions. The payout
+    // amount is derived from those records, never trusted from the request body.
+    const outstanding = await Commission.find({
+      employeeId,
+      status: { $in: ['CALCULATED', 'APPROVED'] }
+    }).select('_id commissionAmount');
+
+    if (outstanding.length === 0) {
+      return res.status(400).json({ message: 'No outstanding commissions available for payout' });
+    }
+
+    const amount = Math.round(
+      outstanding.reduce((sum, c) => sum + (c.commissionAmount || 0), 0) * 100
+    ) / 100;
+    const commissionIds = outstanding.map((c) => c._id);
+
+    // Collision-resistant reference (countDocuments could race concurrent requests).
+    const referenceNo = `PAY-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
     const payout = await Payout.create({
       employeeId,
       amount,
       referenceNo,
       bankDetails,
+      commissionIds,
       status: 'PENDING'
     });
 
@@ -58,15 +92,34 @@ exports.approvePayout = async (req, res, next) => {
 
     if (!payout) return res.status(404).json({ message: 'Payout not found' });
 
+    if (payout.status === 'COMPLETED') {
+      return res.status(400).json({ message: 'Payout already completed' });
+    }
+
+    // SECURITY: no one may approve their own payout (segregation of duties).
+    const approverEmp = req.user ? await Employee.findOne({ userId: req.user._id }) : null;
+    if (approverEmp && payout.employeeId && approverEmp._id.toString() === payout.employeeId._id.toString()) {
+      return res.status(403).json({ message: 'You cannot approve your own payout' });
+    }
+
     payout.status = 'COMPLETED';
     payout.approvedBy = req.user ? req.user._id : null;
     await payout.save();
 
-    // Mark corresponding calculated commissions as PAID
-    await Commission.updateMany(
-      { employeeId: payout.employeeId._id, status: { $in: ['CALCULATED', 'APPROVED'] } },
-      { status: 'PAID' }
-    );
+    // Mark ONLY the commissions this payout was created to settle as PAID, so
+    // payout totals stay reconciled with commission records. Falls back to the
+    // legacy behaviour for older payouts that predate commission linking.
+    if (payout.commissionIds && payout.commissionIds.length > 0) {
+      await Commission.updateMany(
+        { _id: { $in: payout.commissionIds }, status: { $in: ['CALCULATED', 'APPROVED'] } },
+        { status: 'PAID' }
+      );
+    } else {
+      await Commission.updateMany(
+        { employeeId: payout.employeeId._id, status: { $in: ['CALCULATED', 'APPROVED'] } },
+        { status: 'PAID' }
+      );
+    }
 
     // Send multi-channel notification (Email + WhatsApp + In-App)
     if (payout.employeeId && payout.employeeId.userId) {

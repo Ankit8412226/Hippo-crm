@@ -12,6 +12,7 @@ const Transaction = require('../models/Transaction');
 const Commission = require('../models/Commission');
 const Payout = require('../models/Payout');
 const Notification = require('../models/Notification');
+const { tableToRankOverrides } = require('../config/commissionPlans');
 
 dotenv.config();
 
@@ -162,15 +163,24 @@ const seedDB = async () => {
       { name: 'Emerald Hills Tech Township', code: 'EHT-05', location: 'Electronic City, Bangalore', totalAreaSqft: 750000, totalPlots: 40, basePricePerSqft: 4200 }
     ];
 
+    // Assign each project one of the three business-plan commission tables so
+    // rates are genuinely per-project (and editable later via ProjectSettings).
+    const planKeys = ['HIPPO_INFRA', 'RAMLOK', 'HIPPO_ENCLAVE'];
+
     const insertedProjects = [];
-    for (const pData of projectsData) {
+    for (let pi = 0; pi < projectsData.length; pi++) {
+      const pData = projectsData[pi];
+      const planKey = planKeys[pi % planKeys.length];
       const proj = await Project.create({
         ...pData,
         status: 'ACTIVE',
         launchDate: new Date('2024-01-10'),
         createdBy: userCeo._id
       });
-      await ProjectSettings.create({ projectId: proj._id });
+      await ProjectSettings.create({
+        projectId: proj._id,
+        rankOverrides: tableToRankOverrides(planKey)
+      });
       insertedProjects.push(proj);
     }
 
@@ -224,16 +234,17 @@ const seedDB = async () => {
             transactionDate: new Date()
           });
 
+          const seedRate = 5; // entry Business Executive rate; internally consistent
           await Commission.create({
             transactionId: tx._id,
             plotId: plot._id,
             employeeId: sellerEmp._id,
             rankAtSale: sellerEmp.currentRank,
             saleAmount: plot.price,
-            commissionRate: 10,
-            differentialRate: 5,
-            commissionAmount: (plot.price * 0.05),
-            levelDepth: 1,
+            commissionRate: seedRate,
+            differentialRate: seedRate,
+            commissionAmount: Math.round((plot.price * seedRate) / 100 * 100) / 100,
+            levelDepth: 0,
             status: 'CALCULATED',
             calculatedAt: new Date()
           });
