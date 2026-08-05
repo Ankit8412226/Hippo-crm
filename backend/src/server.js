@@ -12,9 +12,13 @@ const app = express();
 // Connect MongoDB Database
 connectDB();
 
-// CORS - Open for Vercel deployment
+// CORS — set CORS_ORIGINS (comma-separated) in production to restrict origins.
+// Falls back to '*' if unset so local dev / current deploy keep working.
+const corsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+  : '*';
 app.use(cors({
-  origin: '*',
+  origin: corsOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 }));

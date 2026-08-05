@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Plot, Project } from '../../types';
-import { ZoomIn, ZoomOut, RotateCcw, Filter, Search, Building2, MapPin, Image as ImageIcon } from 'lucide-react';
+import { ZoomIn, ZoomOut, RotateCcw, Search, Building2, Image as ImageIcon, Move } from 'lucide-react';
 
 interface PlotMapCanvasProps {
   projects: Project[];
@@ -22,6 +22,25 @@ export const PlotMapCanvas: React.FC<PlotMapCanvasProps> = ({
   const [activeBlock, setActiveBlock] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showMapBackground, setShowMapBackground] = useState<boolean>(true);
+
+  // Drag-to-pan state.
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const panRef = useRef<{ dragging: boolean; startX: number; startY: number; originX: number; originY: number }>({
+    dragging: false, startX: 0, startY: 0, originX: 0, originY: 0
+  });
+
+  const onPanStart = (e: React.MouseEvent) => {
+    panRef.current = { dragging: true, startX: e.clientX, startY: e.clientY, originX: pan.x, originY: pan.y };
+  };
+  const onPanMove = (e: React.MouseEvent) => {
+    if (!panRef.current.dragging) return;
+    setPan({
+      x: panRef.current.originX + (e.clientX - panRef.current.startX),
+      y: panRef.current.originY + (e.clientY - panRef.current.startY)
+    });
+  };
+  const onPanEnd = () => { panRef.current.dragging = false; };
+  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -49,6 +68,12 @@ export const PlotMapCanvas: React.FC<PlotMapCanvasProps> = ({
 
     return matchesProject && matchesStatus && matchesBlock && matchesSearch;
   });
+
+  // Blocks present in the currently selected project (dynamic, not hardcoded).
+  const projectPlots = plots.filter((plot) =>
+    !selectedProjectId || (typeof plot.projectId === 'string' ? plot.projectId === selectedProjectId : plot.projectId?._id === selectedProjectId)
+  );
+  const blocks = ['ALL', ...Array.from(new Set(projectPlots.map((p) => p.block).filter(Boolean))).sort()];
 
   const projectMapImage = (selectedProject as any)?.bannerImage || 'https://images.unsplash.com/photo-1524813686514-a57563d77965?auto=format&fit=crop&w=1200&q=80';
 
@@ -127,7 +152,7 @@ export const PlotMapCanvas: React.FC<PlotMapCanvasProps> = ({
           {/* Block Selector */}
           <div className="flex items-center gap-1 ml-2 pl-2 border-l border-[#1F2937]">
             <span className="text-[10px] text-[#94A3B8] font-bold">Block:</span>
-            {['ALL', 'A', 'B', 'C', 'D'].map((b) => (
+            {blocks.map((b) => (
               <button
                 key={b}
                 onClick={() => setActiveBlock(b)}
@@ -171,9 +196,9 @@ export const PlotMapCanvas: React.FC<PlotMapCanvasProps> = ({
               <ZoomIn className="w-4 h-4" />
             </button>
             <button
-              onClick={() => setZoom(1)}
+              onClick={resetView}
               className="p-1 text-[#94A3B8] hover:text-white border-l border-[#1F2937]"
-              title="Reset Zoom"
+              title="Reset View"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
@@ -181,11 +206,22 @@ export const PlotMapCanvas: React.FC<PlotMapCanvasProps> = ({
         </div>
       </div>
 
+      {/* Hint */}
+      <div className="flex items-center gap-1.5 text-[10px] text-[#94A3B8] -mb-2">
+        <Move className="w-3 h-3" /> Drag to pan · scroll controls to zoom · click a plot for details
+      </div>
+
       {/* SVG Canvas Map Render with Blueprint Background Overlay */}
-      <div className="w-full h-[520px] bg-[#0B1120] rounded-xl border border-[#1F2937] overflow-auto relative flex items-center justify-center p-6">
+      <div
+        className="w-full h-[520px] bg-[#0B1120] rounded-xl border border-[#1F2937] overflow-hidden relative p-6 cursor-grab active:cursor-grabbing"
+        onMouseDown={onPanStart}
+        onMouseMove={onPanMove}
+        onMouseUp={onPanEnd}
+        onMouseLeave={onPanEnd}
+      >
         <div
-          style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}
-          className="transition-transform duration-200 relative min-w-[950px] min-h-[500px]"
+          style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'top left' }}
+          className="relative min-w-[950px] min-h-[500px]"
         >
           {/* Project Blueprint Image Background */}
           {showMapBackground && projectMapImage && (
@@ -201,53 +237,47 @@ export const PlotMapCanvas: React.FC<PlotMapCanvasProps> = ({
             </pattern>
             <rect width="100%" height="100%" fill="url(#grid)" fillOpacity="0.4" />
 
-            {/* Plot Rectangles / Polygons */}
+            {/* Plot Polygons (real map geometry) with rectangle fallback */}
             {filteredPlots.map((plot) => {
-              const x = plot.coordinates?.x || 50;
-              const y = plot.coordinates?.y || 50;
+              const points = plot.polygon?.points || [];
+              const hasPolygon = points.length >= 3;
+              const x = plot.coordinates?.x ?? 50;
+              const y = plot.coordinates?.y ?? 50;
               const width = plot.coordinates?.width || 125;
               const height = plot.coordinates?.height || 90;
               const color = getStatusColor(plot.status);
 
+              // Label anchor = polygon centroid, else rectangle centre.
+              const cx = hasPolygon ? points.reduce((s, p) => s + p.x, 0) / points.length : x + width / 2;
+              const cy = hasPolygon ? points.reduce((s, p) => s + p.y, 0) / points.length : y + height / 2;
+              const priceL = ((plot.totalCost || plot.price || 0) / 100000).toFixed(1);
+
               return (
-                <g
-                  key={plot._id}
-                  onClick={() => onSelectPlot(plot)}
-                  className="cursor-pointer group"
-                >
-                  <rect
-                    x={x}
-                    y={y}
-                    width={width}
-                    height={height}
-                    rx="8"
-                    fill={color}
-                    fillOpacity="0.35"
-                    stroke={color}
-                    strokeWidth="2.5"
-                    className="transition-all duration-200 group-hover:fill-opacity-60 group-hover:stroke-width-4"
-                  />
-                  <text
-                    x={x + width / 2}
-                    y={y + height / 2 - 8}
-                    textAnchor="middle"
-                    fill="#F8FAFC"
-                    fontSize="12"
-                    fontWeight="bold"
-                    className="pointer-events-none select-none"
-                  >
+                <g key={plot._id} onClick={() => onSelectPlot(plot)} className="cursor-pointer group">
+                  {hasPolygon ? (
+                    <polygon
+                      points={points.map((p) => `${p.x},${p.y}`).join(' ')}
+                      fill={color}
+                      fillOpacity="0.35"
+                      stroke={color}
+                      strokeWidth="2.5"
+                      className="transition-all duration-200 group-hover:fill-opacity-60"
+                    />
+                  ) : (
+                    <rect
+                      x={x} y={y} width={width} height={height} rx="8"
+                      fill={color}
+                      fillOpacity="0.35"
+                      stroke={color}
+                      strokeWidth="2.5"
+                      className="transition-all duration-200 group-hover:fill-opacity-60"
+                    />
+                  )}
+                  <text x={cx} y={cy - 4} textAnchor="middle" fill="#F8FAFC" fontSize="12" fontWeight="bold" className="pointer-events-none select-none">
                     {plot.plotNo}
                   </text>
-                  <text
-                    x={x + width / 2}
-                    y={y + height / 2 + 10}
-                    textAnchor="middle"
-                    fill={color}
-                    fontSize="10"
-                    fontWeight="bold"
-                    className="pointer-events-none select-none"
-                  >
-                    ₹{(plot.price / 100000).toFixed(1)}L
+                  <text x={cx} y={cy + 12} textAnchor="middle" fill={color} fontSize="10" fontWeight="bold" className="pointer-events-none select-none">
+                    ₹{priceL}L
                   </text>
                 </g>
               );

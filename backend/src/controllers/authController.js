@@ -2,16 +2,19 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Employee = require('../models/Employee');
+const { JWT_SECRET, JWT_EXPIRE } = require('../config/jwt');
 
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET || 'supersecretkey_change_in_production_123456789', {
-    expiresIn: process.env.JWT_EXPIRE || '24h'
-  });
+  return jwt.sign({ id }, JWT_SECRET, { expiresIn: JWT_EXPIRE });
 };
 
 exports.register = async (req, res, next) => {
   try {
-    const { email, password, fullName, phone, role, parentEmployeeId } = req.body;
+    const { email, password, fullName, phone, parentEmployeeId } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
 
     let user = await User.findOne({ email });
     if (user) {
@@ -21,12 +24,15 @@ exports.register = async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // SECURITY: self-registration is ALWAYS an AGENT. Privileged roles
+    // (ADMIN/DIRECTOR/etc.) can only be granted by an admin via employee
+    // management — never from the public register body.
     user = await User.create({
       email,
       password: hashedPassword,
       fullName,
       phone,
-      role: role || 'AGENT'
+      role: 'AGENT'
     });
 
     // Create corresponding Employee record

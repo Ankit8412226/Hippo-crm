@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { computePricing } = require('../services/pricingEngine');
 
 const plotSchema = new mongoose.Schema({
   projectId: {
@@ -57,6 +58,16 @@ const plotSchema = new mongoose.Schema({
   gstOnOtherCharges: {
     type: Number,
     default: 0
+  },
+  // Base rate per sellable sq-yard (before PLC/OTMC/GST). Drives Total Cost.
+  baseRatePerSqYrd: {
+    type: Number,
+    default: 0
+  },
+  // GST percentage applied to PLC + OTMC charges (spreadsheet uses 18%).
+  gstRate: {
+    type: Number,
+    default: 18
   },
   totalCost: {
     type: Number,
@@ -129,5 +140,21 @@ const plotSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 plotSchema.index({ projectId: 1, block: 1, plotNo: 1 }, { unique: true });
+
+// Keep derived pricing fields consistent on every save. totalPlc and GST are
+// always recomputed from inputs; Total Cost is recomputed only when the base
+// rate is known (so legacy plots priced purely on sizeSqft keep their price).
+plotSchema.pre('save', function (next) {
+  if (this.sellableSqYrd && this.sellableSqYrd > 0) {
+    const p = computePricing(this);
+    this.totalPlc = p.totalPlc;
+    this.gstOnOtherCharges = p.gstOnOtherCharges;
+    if (this.baseRatePerSqYrd && this.baseRatePerSqYrd > 0) {
+      this.totalCost = p.totalCost;
+      this.price = p.totalCost;
+    }
+  }
+  next();
+});
 
 module.exports = mongoose.model('Plot', plotSchema);

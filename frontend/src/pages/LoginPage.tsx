@@ -23,10 +23,12 @@ export const LoginPage: React.FC = () => {
       const { token, user, employee } = response.data;
 
       login(token, user, employee);
-      navigate('/dashboard');
+      // Admin/Director land on the executive dashboard; agents on their MLM tree.
+      const isAdmin = ['ADMIN', 'DIRECTOR'].includes(user.role);
+      navigate(isAdmin ? '/dashboard' : '/mlm-tree');
     } catch (err: any) {
       console.error(err);
-      setError(err.response?.data?.message || 'Invalid login credentials');
+      setError(err.friendlyMessage || err.response?.data?.message || 'Invalid login credentials');
     } finally {
       setIsLoading(false);
     }

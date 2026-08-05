@@ -1,5 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 import {
   LayoutDashboard,
   Users,
@@ -17,22 +18,30 @@ import {
   Building
 } from 'lucide-react';
 
+// adminOnly items are visible only to the company owner side (ADMIN / DIRECTOR).
+// Everything else is available to agents for their own team & earnings.
 const navigationItems = [
-  { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+  { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, adminOnly: true },
   { name: 'Employees', path: '/employees', icon: Users },
   { name: 'MLM Tree', path: '/mlm-tree', icon: GitMerge },
-  { name: 'Projects', path: '/projects', icon: Building2 },
+  { name: 'Projects', path: '/projects', icon: Building2, adminOnly: true },
   { name: 'Plot Management', path: '/plots', icon: MapPin },
-  { name: 'Plot Maps', path: '/plot-maps', icon: Map },
+  { name: 'Plot Maps', path: '/plot-maps', icon: Map, adminOnly: true },
   { name: 'Commissions', path: '/commissions', icon: DollarSign },
   { name: 'Payouts', path: '/payouts', icon: CreditCard },
-  { name: 'OCR Analyzer', path: '/ocr-analyzer', icon: ScanText },
-  { name: 'Reports', path: '/reports', icon: FileBarChart },
+  { name: 'OCR Analyzer', path: '/ocr-analyzer', icon: ScanText, adminOnly: true },
+  { name: 'Reports', path: '/reports', icon: FileBarChart, adminOnly: true },
   { name: 'Notifications', path: '/notifications', icon: Bell },
-  { name: 'Settings', path: '/settings', icon: Settings },
+  { name: 'Settings', path: '/settings', icon: Settings, adminOnly: true },
 ];
 
+const ADMIN_ROLES = ['ADMIN', 'DIRECTOR'];
+
 export const Sidebar: React.FC = () => {
+  const { user } = useAuth();
+  const isAdmin = !!user && ADMIN_ROLES.includes(user.role);
+  const visibleItems = navigationItems.filter((item) => !item.adminOnly || isAdmin);
+
   return (
     <aside className="w-64 bg-[#111827] border-r border-[#1F2937] flex flex-col h-screen sticky top-0 z-30 select-none">
       {/* Brand Header */}
@@ -50,7 +59,7 @@ export const Sidebar: React.FC = () => {
 
       {/* Navigation List */}
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-        {navigationItems.map((item) => {
+        {visibleItems.map((item) => {
           const Icon = item.icon;
           return (
             <NavLink

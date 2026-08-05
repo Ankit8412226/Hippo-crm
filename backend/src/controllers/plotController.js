@@ -3,6 +3,7 @@ const PlotDocument = require('../models/PlotDocument');
 const Transaction = require('../models/Transaction');
 const Employee = require('../models/Employee');
 const { processDifferentialCommission } = require('../services/commissionEngine');
+const { computePricing, deriveBaseRatePerSqYrd } = require('../services/pricingEngine');
 
 exports.getPlots = async (req, res, next) => {
   try {
@@ -37,8 +38,12 @@ exports.getPlotById = async (req, res, next) => {
     const documents = await PlotDocument.find({ plotId: plot._id });
     const transactions = await Transaction.find({ plotId: plot._id }).populate('sellerEmployeeId');
 
+    // Transparent cost breakdown (base + PLC + OTMC + GST = Total Cost).
+    const breakdown = computePricing(plot);
+
     res.json({
       plot,
+      breakdown,
       documents,
       transactions
     });
@@ -99,9 +104,12 @@ exports.updatePlotStatus = async (req, res, next) => {
 
     // If status updated to SOLD, resolve seller employee
     if (status === 'SOLD' && prevStatus !== 'SOLD') {
-      let resolvedSellerId = sellerEmployeeId;
+      const isAdmin = req.user && ['ADMIN', 'DIRECTOR', 'MANAGER'].includes(req.user.role);
 
-      // Auto-resolve seller employee from logged-in token user if not explicitly passed!
+      // Admins may credit the sale to any seller; everyone else can only credit
+      // the sale to themselves (prevents attributing/fabricating others' sales).
+      let resolvedSellerId = isAdmin ? sellerEmployeeId : null;
+
       if (!resolvedSellerId && req.user) {
         const loggedInEmp = await Employee.findOne({ userId: req.user._id });
         if (loggedInEmp) {
@@ -115,14 +123,21 @@ exports.updatePlotStatus = async (req, res, next) => {
         if (topEmp) resolvedSellerId = topEmp._id;
       }
 
-      if (resolvedSellerId) {
+      // Guard: only ever create ONE completed sale + commission set per plot.
+      // Prevents a SOLD -> BOOKED -> SOLD cycle from paying commission twice.
+      const existingSale = await Transaction.findOne({
+        plotId: plot._id,
+        status: 'COMPLETED'
+      });
+
+      if (resolvedSellerId && !existingSale) {
         const transaction = await Transaction.create({
           plotId: plot._id,
           buyerName: plot.ownerName || ownerName || 'Customer',
           buyerPhone: plot.ownerPhone || ownerPhone || '',
           buyerEmail: plot.ownerEmail || ownerEmail || '',
           sellerEmployeeId: resolvedSellerId,
-          amount: plot.price,
+          amount: plot.totalCost || plot.price || 0,
           paymentMode: paymentMode || 'NET_BANKING',
           status: 'COMPLETED',
           transactionDate: new Date()
@@ -134,6 +149,17 @@ exports.updatePlotStatus = async (req, res, next) => {
     }
 
     res.json(plot);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Live pricing preview for the plot form — returns the full cost breakdown
+// for a set of inputs without persisting anything.
+exports.computePricePreview = async (req, res, next) => {
+  try {
+    const breakdown = computePricing(req.body || {});
+    res.json(breakdown);
   } catch (error) {
     next(error);
   }
@@ -217,13 +243,21 @@ exports.importPlotsCSV = async (req, res, next) => {
       const plc9mtr = parseFloat(item['9Mtr'] || item.plc9mtr || 0) || 0;
       const plcCorner = parseFloat(item['Corner'] || item.plcCorner || 0) || 0;
       const plcParkFacing = parseFloat(item['Park Facing'] || item.plcParkFacing || 0) || 0;
-      const totalPlc = parseFloat(item['Total PLC'] || item.totalPlc || 0);
       const discountedPlc = parseFloat(item['Discounted PLC'] || item.discountedPlc || 0);
       const otmc = parseFloat(item['OTMC'] || item.otmc || 0);
-      const gstOnOtherCharges = parseFloat(item['GST on other cahrges'] || item.gstOnOtherCharges || 0);
-      const totalCost = parseFloat(item['Total Cost'] || item.totalCost || item.price || 0);
+      const providedTotalCost = parseFloat(item['Total Cost'] || item.totalCost || item.price || 0);
       const status = (item['Status'] || item.status || 'AVAILABLE').toUpperCase();
       const ownerName = item['Owner'] || item.ownerName || '';
+
+      // Back-derive the base rate from the sheet's authoritative Total Cost, then
+      // recompute all charges via the pricing engine so everything reconciles.
+      const priceInputs = {
+        sellableSqYrd, plc12mtr, plc9mtr, plcCorner, plcParkFacing,
+        discountedPlc, otmc, totalCost: providedTotalCost
+      };
+      const baseRatePerSqYrd = deriveBaseRatePerSqYrd(priceInputs);
+      const pricing = computePricing({ ...priceInputs, baseRatePerSqYrd });
+      const finalTotalCost = baseRatePerSqYrd > 0 ? pricing.totalCost : providedTotalCost;
 
       const updatedPlot = await Plot.findOneAndUpdate(
         { projectId, plotNo },
@@ -237,12 +271,13 @@ exports.importPlotsCSV = async (req, res, next) => {
           plc9mtr,
           plcCorner,
           plcParkFacing,
-          totalPlc,
+          totalPlc: pricing.totalPlc,
           discountedPlc,
           otmc,
-          gstOnOtherCharges,
-          totalCost,
-          price: totalCost || (sellableSqYrd * 9 * 3500) || 1500000,
+          baseRatePerSqYrd,
+          gstOnOtherCharges: pricing.gstOnOtherCharges,
+          totalCost: finalTotalCost,
+          price: finalTotalCost || 0,
           sizeSqft: sellableSqYrd ? sellableSqYrd * 9 : 1800,
           status: ['AVAILABLE', 'BOOKED', 'PENDING', 'SOLD'].includes(status) ? status : 'AVAILABLE',
           ownerName

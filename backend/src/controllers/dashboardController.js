@@ -56,15 +56,36 @@ exports.getDashboardStats = async (req, res, next) => {
     ]);
     const totalPayouts = payoutAgg.length > 0 ? payoutAgg[0].totalPayouts : 0;
 
-    // Revenue Trend Chart (Last 6 Months)
-    const revenueTrend = [
-      { month: 'Feb', revenue: 4200000, sales: 8 },
-      { month: 'Mar', revenue: 6800000, sales: 12 },
-      { month: 'Apr', revenue: 8500000, sales: 15 },
-      { month: 'May', revenue: 11200000, sales: 21 },
-      { month: 'Jun', revenue: 14500000, sales: 27 },
-      { month: 'Jul', revenue: totalRevenue || 18900000, sales: plotStats.SOLD || 34 }
-    ];
+    // Revenue Trend Chart — real aggregation of the last 6 months of sales.
+    const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+    const trendAgg = await Transaction.aggregate([
+      { $match: { status: 'COMPLETED', transactionDate: { $gte: sixMonthsAgo } } },
+      {
+        $group: {
+          _id: { y: { $year: '$transactionDate' }, m: { $month: '$transactionDate' } },
+          revenue: { $sum: '$amount' },
+          sales: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const trendMap = {};
+    trendAgg.forEach((t) => { trendMap[`${t._id.y}-${t._id.m}`] = t; });
+
+    const revenueTrend = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
+      const entry = trendMap[key];
+      revenueTrend.push({
+        month: monthLabels[d.getMonth()],
+        revenue: entry ? entry.revenue : 0,
+        sales: entry ? entry.sales : 0
+      });
+    }
 
     // Top Employees Leaderboard
     const topEmployees = await Employee.find()
@@ -72,8 +93,16 @@ exports.getDashboardStats = async (req, res, next) => {
       .limit(5)
       .populate('userId', 'fullName email avatar');
 
-    // Project Revenue Breakdown
+    // Project Revenue Breakdown — real revenue per project from completed sales.
     const projectRevenues = await Project.find().select('name code basePricePerSqft totalPlots');
+    const projectRevAgg = await Transaction.aggregate([
+      { $match: { status: 'COMPLETED' } },
+      { $lookup: { from: 'plots', localField: 'plotId', foreignField: '_id', as: 'plot' } },
+      { $unwind: '$plot' },
+      { $group: { _id: '$plot.projectId', revenue: { $sum: '$amount' }, sales: { $sum: 1 } } }
+    ]);
+    const projectRevMap = {};
+    projectRevAgg.forEach((r) => { projectRevMap[String(r._id)] = r; });
 
     res.json({
       kpi: {
@@ -92,10 +121,10 @@ exports.getDashboardStats = async (req, res, next) => {
       charts: {
         revenueTrend,
         plotStatusDistribution: [
-          { name: 'Available', value: plotStats.AVAILABLE || 45, color: '#22C55E' },
-          { name: 'Booked', value: plotStats.BOOKED || 15, color: '#3B82F6' },
-          { name: 'Pending', value: plotStats.PENDING || 10, color: '#FACC15' },
-          { name: 'Sold', value: plotStats.SOLD || 30, color: '#EF4444' }
+          { name: 'Available', value: plotStats.AVAILABLE, color: '#22C55E' },
+          { name: 'Booked', value: plotStats.BOOKED, color: '#3B82F6' },
+          { name: 'Pending', value: plotStats.PENDING, color: '#FACC15' },
+          { name: 'Sold', value: plotStats.SOLD, color: '#EF4444' }
         ],
         topEmployees: topEmployees.map(e => ({
           name: e.userId ? e.userId.fullName : e.employeeCode,
@@ -106,7 +135,8 @@ exports.getDashboardStats = async (req, res, next) => {
         projectRevenue: projectRevenues.map(p => ({
           name: p.name,
           plots: p.totalPlots,
-          estimatedRevenue: p.totalPlots * 1500 * p.basePricePerSqft
+          soldPlots: projectRevMap[String(p._id)] ? projectRevMap[String(p._id)].sales : 0,
+          revenue: projectRevMap[String(p._id)] ? projectRevMap[String(p._id)].revenue : 0
         }))
       }
     });

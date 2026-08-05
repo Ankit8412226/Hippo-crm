@@ -2,15 +2,21 @@ const mongoose = require('mongoose');
 const Employee = require('../models/Employee');
 const EmployeeHierarchy = require('../models/EmployeeHierarchy');
 
-// Rank Criteria Matrix based on Hippo Business Plan
+// Rank Criteria Matrix based on Hippo Business Plan.
+// commissionPercent here is the DEFAULT (Hippo Infra / page 1) rate; per-project
+// rates come from ProjectSettings.rankOverrides. Ordered highest -> lowest.
+// rankOrder: promotion ladder index (0 = entry). assignedOnly: not auto-computed
+// from thresholds — assigned manually by the company owner (top of the tree).
 const RANK_RULES = [
   {
     rank: 'Director Sales',
     commissionPercent: 20,
     minSelfSales: 0,
-    minTeamSales: 100,
-    minLegs: 3,
-    timeLimitDays: null
+    minTeamSales: 0,
+    minLegs: 0,
+    timeLimitDays: null,
+    rankOrder: 6,
+    assignedOnly: true
   },
   {
     rank: 'Associate Sales Director',
@@ -18,7 +24,9 @@ const RANK_RULES = [
     minSelfSales: 0,
     minTeamSales: 50,
     minLegs: 3,
-    timeLimitDays: 60
+    timeLimitDays: 60,
+    rankOrder: 5,
+    assignedOnly: false
   },
   {
     rank: 'Business Development Manager',
@@ -26,7 +34,9 @@ const RANK_RULES = [
     minSelfSales: 1,
     minTeamSales: 20,
     minLegs: 3,
-    timeLimitDays: null
+    timeLimitDays: null,
+    rankOrder: 4,
+    assignedOnly: false
   },
   {
     rank: 'Sr Team Leader',
@@ -34,7 +44,9 @@ const RANK_RULES = [
     minSelfSales: 1,
     minTeamSales: 12,
     minLegs: 3,
-    timeLimitDays: null
+    timeLimitDays: null,
+    rankOrder: 3,
+    assignedOnly: false
   },
   {
     rank: 'Team Leader',
@@ -42,7 +54,9 @@ const RANK_RULES = [
     minSelfSales: 2,
     minTeamSales: 8,
     minLegs: 2,
-    timeLimitDays: null
+    timeLimitDays: null,
+    rankOrder: 2,
+    assignedOnly: false
   },
   {
     rank: 'Sr Business Executive',
@@ -50,7 +64,9 @@ const RANK_RULES = [
     minSelfSales: 2,
     minTeamSales: 5,
     minLegs: 2,
-    timeLimitDays: null
+    timeLimitDays: null,
+    rankOrder: 1,
+    assignedOnly: false
   },
   {
     rank: 'Business Executive',
@@ -58,19 +74,50 @@ const RANK_RULES = [
     minSelfSales: 2,
     minTeamSales: 0,
     minLegs: 0,
-    timeLimitDays: null
+    timeLimitDays: null,
+    rankOrder: 0,
+    assignedOnly: false
   }
 ];
 
+// Label used for a member who has not yet met even the entry (BE) criteria.
+// They keep this label and earn 0% until qualified — see isRankQualified().
+const ENTRY_RANK = 'Business Executive';
+
 /**
- * Get all downline employee IDs recursively for a given employee
+ * Is an employee genuinely qualified for a rank given their live metrics?
+ * Used by the commission engine so an under-qualified member (e.g. 0 self
+ * sales but labelled Business Executive) never absorbs a commission slice.
+ * assignedOnly ranks (Director Sales) are always considered qualified.
  */
-async function getDownlineEmployeeIds(employeeId) {
+function isRankQualified(rankName, metrics) {
+  const rule = RANK_RULES.find((r) => r.rank === rankName);
+  if (!rule) return false;
+  if (rule.assignedOnly) return true;
+  return (
+    (metrics.selfSalesCount || 0) >= rule.minSelfSales &&
+    (metrics.teamSalesCount || 0) >= rule.minTeamSales &&
+    (metrics.activeLegsCount || 0) >= rule.minLegs
+  );
+}
+
+/**
+ * Get all downline employee IDs recursively for a given employee.
+ * `visited` guards against a corrupted parentId cycle (A -> B -> A) that
+ * would otherwise cause infinite recursion.
+ */
+async function getDownlineEmployeeIds(employeeId, visited = new Set()) {
+  const key = employeeId.toString();
+  if (visited.has(key)) return [];
+  visited.add(key);
+
   const children = await Employee.find({ parentId: employeeId }).select('_id');
-  let allDownlineIds = children.map(c => c._id);
+  let allDownlineIds = [];
 
   for (const child of children) {
-    const subDownline = await getDownlineEmployeeIds(child._id);
+    if (visited.has(child._id.toString())) continue;
+    allDownlineIds.push(child._id);
+    const subDownline = await getDownlineEmployeeIds(child._id, visited);
     allDownlineIds = allDownlineIds.concat(subDownline);
   }
   return allDownlineIds;
@@ -126,31 +173,43 @@ async function evaluateAndUpgradeRank(employeeId) {
     (Date.now() - new Date(metrics.joiningDate).getTime()) / (1000 * 60 * 60 * 24)
   );
 
-  let newRank = 'Business Executive';
-  let commissionRate = 5;
-
+  // Find the highest rank the member currently QUALIFIES for. assignedOnly ranks
+  // (Director Sales) are excluded — those are assigned manually by the owner.
+  // The 2-month (60 day) window on ASD is a qualification gate, not a demotion
+  // trigger: ranks are promotion-only and never auto-downgraded below what was
+  // already earned.
+  let candidate = null;
   for (const rule of RANK_RULES) {
+    if (rule.assignedOnly) continue;
     if (metrics.selfSalesCount < rule.minSelfSales) continue;
     if (metrics.teamSalesCount < rule.minTeamSales) continue;
     if (metrics.activeLegsCount < rule.minLegs) continue;
+    if (rule.timeLimitDays !== null && daysSinceJoining > rule.timeLimitDays) continue;
 
-    if (rule.timeLimitDays !== null && daysSinceJoining > rule.timeLimitDays) {
-      continue;
-    }
-
-    newRank = rule.rank;
-    commissionRate = rule.commissionPercent;
-    break; // Top matching rank found
+    candidate = rule;
+    break; // RANK_RULES is ordered highest -> lowest
   }
 
-  if (employee.currentRank !== newRank) {
-    employee.currentRank = newRank;
+  const currentRule = RANK_RULES.find((r) => r.rank === employee.currentRank);
+  const currentOrder = currentRule ? currentRule.rankOrder : -1;
+
+  // Promotion-only: upgrade if the qualified rank is strictly higher than the
+  // current one. Never auto-demote (protects earned ranks, owner's DS, and an
+  // ASD who crossed the 60-day window).
+  if (candidate && candidate.rankOrder > currentOrder) {
+    employee.currentRank = candidate.rank;
     await employee.save();
   }
+
+  const effectiveRule = RANK_RULES.find((r) => r.rank === employee.currentRank);
+  const commissionRate = isRankQualified(employee.currentRank, metrics)
+    ? (effectiveRule ? effectiveRule.commissionPercent : 0)
+    : 0;
 
   return {
     employeeId: employee._id,
     currentRank: employee.currentRank,
+    qualified: isRankQualified(employee.currentRank, metrics),
     commissionRate,
     metrics
   };
@@ -179,11 +238,15 @@ async function getMLMTree(rootEmployeeId = null) {
 
   if (!root) return null;
 
+  const visited = new Set();
+
   async function buildNode(emp) {
+    visited.add(emp._id.toString());
     const children = await Employee.find({ parentId: emp._id }).populate('userId', 'fullName email phone avatar');
     const childNodes = [];
 
     for (const child of children) {
+      if (visited.has(child._id.toString())) continue; // guard against parentId cycles
       const childTree = await buildNode(child);
       childNodes.push(childTree);
     }
@@ -212,6 +275,8 @@ async function getMLMTree(rootEmployeeId = null) {
 
 module.exports = {
   RANK_RULES,
+  ENTRY_RANK,
+  isRankQualified,
   calculateEmployeeSalesMetrics,
   evaluateAndUpgradeRank,
   getDownlineEmployeeIds,

@@ -1,53 +1,39 @@
-import React from 'react';
-import { FileBarChart, Download } from 'lucide-react';
+import React, { useState } from 'react';
+import { FileBarChart, Download, Loader2 } from 'lucide-react';
 import api from '../services/api';
+import { useToast } from '../context/ToastContext';
+
+// Each report maps to a real backend endpoint that streams a CSV of live data.
+const REPORTS = [
+  { title: 'Revenue & Sales Report', type: 'REVENUE', endpoint: '/reports/revenue', desc: 'Every completed sale transaction with project, plot, buyer, seller & amount' },
+  { title: 'Differential Commission Audit', type: 'COMMISSION', endpoint: '/reports/commission-audit', desc: 'Full upline differential commission calculation audit trail' },
+  { title: 'MLM Downline Performance', type: 'MLM_HIERARCHY', endpoint: '/reports/mlm-performance', desc: 'Agent self sales, team sales, active legs, rank & sponsor' },
+  { title: 'Plot Inventory Ledger', type: 'PLOT_SALES', endpoint: '/reports/plot-ledger', desc: 'Client 15-column format: Plot No, Sellable/Carpet SqYrd, PLC, GST, Cost, Status & Owner' },
+  { title: 'Payout Disbursement Log', type: 'PAYOUT_SUMMARY', endpoint: '/reports/payout-summary', desc: 'Requested & approved payouts with settled commission counts' }
+];
 
 export const ReportsPage: React.FC = () => {
+  const [loading, setLoading] = useState<string | null>(null);
+  const toast = useToast();
 
-  const handleExportReport = async (type: string, title: string) => {
-    if (type === 'PLOT_SALES') {
-      try {
-        const response = await api.get('/plots');
-        const plots = response.data;
-        const headers = [
-          'S.No', 'Plot No', 'Sellable Sq Yrd', 'Carpet Sq Yrd',
-          '12mtr', '9Mtr', 'Corner', 'Park Facing',
-          'Total PLC', 'Discounted PLC', 'OTMC',
-          'GST on other cahrges', 'Total Cost', 'Status', 'Owner'
-        ];
-
-        const rows = plots.map((p: any, idx: number) => [
-          idx + 1,
-          `"${p.plotNo || ''}"`,
-          p.sellableSqYrd || (p.sizeSqft ? (p.sizeSqft / 9).toFixed(2) : 201.28),
-          p.carpetSqYrd || (p.sizeSqft ? (p.sizeSqft / 18).toFixed(2) : 104.48),
-          p.plc12mtr || '-',
-          p.plc9mtr || '-',
-          p.plcCorner || '-',
-          p.plcParkFacing || '-',
-          p.totalPlc || 0,
-          p.discountedPlc || 0,
-          p.otmc || 250,
-          p.gstOnOtherCharges || 9057.69,
-          p.totalCost || p.price || 1367510,
-          `"${p.status || 'AVAILABLE'}"`,
-          `"${p.ownerName || ''}"`
-        ]);
-
-        const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement('a');
-        link.setAttribute('href', encodedUri);
-        link.setAttribute('download', `${title.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } catch (error) {
-        console.error(error);
-        alert('Failed to export plot inventory report');
-      }
-    } else {
-      alert(`Exporting ${title} report...`);
+  const handleExportReport = async (endpoint: string, title: string) => {
+    try {
+      setLoading(endpoint);
+      const response = await api.get(endpoint, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `${title.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`${title} exported`);
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.friendlyMessage || `Failed to export "${title}" (admin only).`);
+    } finally {
+      setLoading(null);
     }
   };
 
@@ -56,18 +42,12 @@ export const ReportsPage: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-extrabold text-[#F8FAFC]">Financial & Audit Reports</h2>
-          <p className="text-xs text-[#94A3B8] mt-1">Exportable CSV & PDF financial audits, MLM tree reports, and plot inventory ledgers</p>
+          <p className="text-xs text-[#94A3B8] mt-1">Exportable CSV financial audits, MLM tree reports, and plot inventory ledgers — generated from live data</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {[
-          { title: 'Revenue & Sales Report', type: 'REVENUE', desc: 'Monthly transaction logs and project revenue breakdowns' },
-          { title: 'Differential Commission Audit', type: 'COMMISSION', desc: 'Full upline commission calculation audit trails' },
-          { title: 'MLM Downline Performance', type: 'MLM_HIERARCHY', desc: 'Agent self sales, team sales, and leg progress reports' },
-          { title: 'Plot Inventory Ledger', type: 'PLOT_SALES', desc: 'Client 15-column format: Plot No, Sellable/Carpet SqYrd, PLC breakdowns, GST, Cost, Status & Owner' },
-          { title: 'Payout Disbursement Log', type: 'PAYOUT_SUMMARY', desc: 'Historical bank transfer records and approved payouts' }
-        ].map((report, idx) => (
+        {REPORTS.map((report, idx) => (
           <div key={idx} className="glass-card p-6 rounded-2xl border border-[#1F2937] hover:border-[#1E40AF] transition-all space-y-4">
             <FileBarChart className="w-8 h-8 text-[#3B82F6]" />
             <div>
@@ -75,10 +55,15 @@ export const ReportsPage: React.FC = () => {
               <p className="text-xs text-[#94A3B8] mt-1">{report.desc}</p>
             </div>
             <button
-              onClick={() => handleExportReport(report.type, report.title)}
-              className="w-full py-2.5 bg-[#0F172A] border border-[#1F2937] text-white hover:bg-[#1E40AF] text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors"
+              onClick={() => handleExportReport(report.endpoint, report.title)}
+              disabled={loading === report.endpoint}
+              className="w-full py-2.5 bg-[#0F172A] border border-[#1F2937] text-white hover:bg-[#1E40AF] text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
             >
-              <Download className="w-4 h-4 text-emerald-400" /> Export PDF / CSV
+              {loading === report.endpoint ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
+              ) : (
+                <><Download className="w-4 h-4 text-emerald-400" /> Export CSV</>
+              )}
             </button>
           </div>
         ))}
