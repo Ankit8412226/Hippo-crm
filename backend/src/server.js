@@ -1,11 +1,12 @@
+// Load .env FIRST — local modules (e.g. config/jwt) read process.env at
+// require-time, so this must run before any of the requires below.
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const connectDB = require('./config/db');
 const apiRoutes = require('./routes/apiRoutes');
 const errorHandler = require('./middleware/errorHandler');
-
-dotenv.config();
 
 const app = express();
 
