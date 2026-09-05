@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Search, Bell, LogOut, ShieldCheck, Award } from 'lucide-react';
+import { Search, Bell, LogOut, ShieldCheck, Award, Menu } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const ROLE_LABEL: Record<string, string> = {
@@ -11,7 +11,11 @@ const ROLE_LABEL: Record<string, string> = {
   EMPLOYEE: 'Employee'
 };
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  onToggleMobile?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onToggleMobile }) => {
   const { user, employee, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -23,16 +27,27 @@ export const Header: React.FC = () => {
   };
 
   return (
-    <header className="h-16 bg-[#111827]/80 backdrop-blur-md border-b border-[#1F2937] px-6 flex items-center justify-between sticky top-0 z-20">
-      {/* Search Input */}
-      <div className="relative w-72">
-        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-        <input
-          type="text"
-          placeholder="Search plots, agents, projects..."
-          className="w-full bg-[#0F172A] border border-[#1F2937] rounded-xl pl-9 pr-4 py-2 text-xs text-[#F8FAFC] placeholder-[#94A3B8] focus:outline-none focus:border-[#1E40AF]"
-        />
+    <header className="h-16 bg-[#111827]/80 backdrop-blur-md border-b border-[#1F2937] px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20">
+      {/* Mobile Hamburger & Search Input */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onToggleMobile}
+          className="p-2 rounded-xl bg-[#0F172A] border border-[#1F2937] text-[#94A3B8] hover:text-white lg:hidden"
+          title="Open menu"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+
+        <div className="relative w-48 sm:w-72">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+          <input
+            type="text"
+            placeholder="Search plots, agents..."
+            className="w-full bg-[#0F172A] border border-[#1F2937] rounded-xl pl-9 pr-4 py-2 text-xs text-[#F8FAFC] placeholder-[#94A3B8] focus:outline-none focus:border-[#1E40AF]"
+          />
+        </div>
       </div>
+
 
       {/* User Actions */}
       <div className="flex items-center gap-4">

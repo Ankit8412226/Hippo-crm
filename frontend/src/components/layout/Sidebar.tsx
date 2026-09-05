@@ -37,56 +37,79 @@ const navigationItems = [
 
 const ADMIN_ROLES = ['ADMIN', 'DIRECTOR'];
 
-export const Sidebar: React.FC = () => {
+interface SidebarProps {
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen = false, onCloseMobile }) => {
   const { user } = useAuth();
   const isAdmin = !!user && ADMIN_ROLES.includes(user.role);
   const visibleItems = navigationItems.filter((item) => !item.adminOnly || isAdmin);
 
   return (
-    <aside className="w-64 bg-[#111827] border-r border-[#1F2937] flex flex-col h-screen sticky top-0 z-30 select-none">
-      {/* Brand Header */}
-      <div className="p-5 border-b border-[#1F2937] flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#1E40AF] to-[#F97316] flex items-center justify-center shadow-lg shadow-blue-900/40">
-          <Building className="w-6 h-6 text-white" />
-        </div>
-        <div>
-          <h1 className="font-extrabold text-lg text-[#F8FAFC] tracking-tight leading-none">
-            HIPPO <span className="text-[#F97316]">CRM</span>
-          </h1>
-          <p className="text-[10px] text-[#94A3B8] font-medium tracking-wide uppercase mt-1">Real Estate MLM Platform</p>
-        </div>
-      </div>
+    <>
+      {/* Mobile Backdrop */}
+      {mobileOpen && (
+        <div
+          onClick={onCloseMobile}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
+        />
+      )}
 
-      {/* Navigation List */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-        {visibleItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? 'bg-gradient-to-r from-[#1E40AF] to-blue-900 text-white shadow-md shadow-blue-900/30'
-                    : 'text-[#94A3B8] hover:bg-[#1F2937] hover:text-[#F8FAFC]'
-                }`
-              }
-            >
-              <Icon className="w-5 h-5 flex-shrink-0" />
-              <span>{item.name}</span>
-            </NavLink>
-          );
-        })}
-      </nav>
-
-      {/* Enterprise Footer */}
-      <div className="p-4 border-t border-[#1F2937] bg-[#0F172A]/50">
-        <div className="flex items-center gap-2 text-xs text-[#94A3B8]">
-          <ShieldCheck className="w-4 h-4 text-[#22C55E]" />
-          <span>Multi-Tier MLM System v1.0</span>
+      <aside
+        className={`w-64 bg-[#111827] border-r border-[#1F2937] flex flex-col h-screen fixed lg:sticky top-0 z-50 transition-transform duration-300 select-none ${
+          mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        }`}
+      >
+        {/* Brand Header */}
+        <div className="p-5 border-b border-[#1F2937] flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#1E40AF] to-[#F97316] flex items-center justify-center shadow-lg shadow-blue-900/40">
+              <Building className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="font-extrabold text-lg text-[#F8FAFC] tracking-tight leading-none">
+                HIPPO <span className="text-[#F97316]">CRM</span>
+              </h1>
+              <p className="text-[10px] text-[#94A3B8] font-medium tracking-wide uppercase mt-1">Real Estate MLM Platform</p>
+            </div>
+          </div>
         </div>
-      </div>
-    </aside>
+
+        {/* Navigation List */}
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+          {visibleItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                onClick={onCloseMobile}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${
+                    isActive
+                      ? 'bg-gradient-to-r from-[#1E40AF] to-blue-900 text-white shadow-md shadow-blue-900/30'
+                      : 'text-[#94A3B8] hover:bg-[#1F2937] hover:text-[#F8FAFC]'
+                  }`
+                }
+              >
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                <span>{item.name}</span>
+              </NavLink>
+            );
+          })}
+        </nav>
+
+        {/* Enterprise Footer */}
+        <div className="p-4 border-t border-[#1F2937] bg-[#0F172A]/50">
+          <div className="flex items-center gap-2 text-xs text-[#94A3B8]">
+            <ShieldCheck className="w-4 h-4 text-[#22C55E]" />
+            <span>Multi-Tier MLM System v1.0</span>
+          </div>
+        </div>
+      </aside>
+    </>
   );
 };
+

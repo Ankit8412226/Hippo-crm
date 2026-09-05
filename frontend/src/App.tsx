@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { Layout } from './components/layout/Layout';
 
+import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EmployeesPage } from './pages/EmployeesPage';
@@ -38,7 +39,10 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; adminOnly?: boolean 
 
 // Sends the user to the right home depending on their role.
 const HomeRedirect: React.FC = () => {
-  const { user } = useAuth();
+  const { token, user } = useAuth();
+  if (!token) {
+    return <Navigate to="/" replace />;
+  }
   const isAdmin = !!user && ADMIN_ROLES.includes(user.role);
   return <Navigate to={isAdmin ? '/dashboard' : '/mlm-tree'} replace />;
 };
@@ -47,29 +51,31 @@ export const App: React.FC = () => {
   return (
     <AuthProvider>
       <ToastProvider>
-      <Router>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
+        <Router>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/login" element={<LoginPage />} />
 
-          <Route path="/dashboard" element={<ProtectedRoute adminOnly><DashboardPage /></ProtectedRoute>} />
-          <Route path="/employees" element={<ProtectedRoute><EmployeesPage /></ProtectedRoute>} />
-          <Route path="/mlm-tree" element={<ProtectedRoute><MLMTreePage /></ProtectedRoute>} />
-          <Route path="/projects" element={<ProtectedRoute adminOnly><ProjectsPage /></ProtectedRoute>} />
-          <Route path="/plots" element={<ProtectedRoute><PlotManagementPage /></ProtectedRoute>} />
-          <Route path="/plot-maps" element={<ProtectedRoute adminOnly><PlotMapsPage /></ProtectedRoute>} />
-          <Route path="/commissions" element={<ProtectedRoute><CommissionsPage /></ProtectedRoute>} />
-          <Route path="/payouts" element={<ProtectedRoute><PayoutsPage /></ProtectedRoute>} />
-          <Route path="/ocr-analyzer" element={<ProtectedRoute adminOnly><OCRAnalyzerPage /></ProtectedRoute>} />
-          <Route path="/reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
-          <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute adminOnly><SettingsPage /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute adminOnly><DashboardPage /></ProtectedRoute>} />
+            <Route path="/employees" element={<ProtectedRoute><EmployeesPage /></ProtectedRoute>} />
+            <Route path="/mlm-tree" element={<ProtectedRoute><MLMTreePage /></ProtectedRoute>} />
+            <Route path="/projects" element={<ProtectedRoute adminOnly><ProjectsPage /></ProtectedRoute>} />
+            <Route path="/plots" element={<ProtectedRoute><PlotManagementPage /></ProtectedRoute>} />
+            <Route path="/plot-maps" element={<ProtectedRoute adminOnly><PlotMapsPage /></ProtectedRoute>} />
+            <Route path="/commissions" element={<ProtectedRoute><CommissionsPage /></ProtectedRoute>} />
+            <Route path="/payouts" element={<ProtectedRoute><PayoutsPage /></ProtectedRoute>} />
+            <Route path="/ocr-analyzer" element={<ProtectedRoute adminOnly><OCRAnalyzerPage /></ProtectedRoute>} />
+            <Route path="/reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
+            <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute adminOnly><SettingsPage /></ProtectedRoute>} />
 
-          <Route path="*" element={<HomeRedirect />} />
-        </Routes>
-      </Router>
+            <Route path="*" element={<HomeRedirect />} />
+          </Routes>
+        </Router>
       </ToastProvider>
     </AuthProvider>
   );
 };
 
 export default App;
+
